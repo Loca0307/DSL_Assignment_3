@@ -21,12 +21,20 @@ trait RequestAssertionDSL extends AssertionExecutor:
 
   // Write your DSL below
 
-  // keep the last eventual to handle parsing grouping variations
+  /**
+    * We keep track of:
+    *  - the last EventualRequest created
+    *  - the last AssertionDescription parsed by the `"..." should "..."` extension
+    */
   private var lastEventualRequest: Option[EventualRequest] = None
   private var lastDescription: Option[AssertionDescription] = None
 
-  // Capture a request without evaluating it.
-  // it produces a Future[Response] when called
+  /**
+    * Instead of holding a Future[Response], we hold:
+    * eval: () => Future[Response]
+    *
+    * So we can trigger the run on demand
+    */
   case class EventualRequest(eval: () => Future[Response]):
     // If parsing bound `should` to the rhs instead of
     // the whole pending assertion, we consult the lastDescription stored
@@ -44,8 +52,9 @@ trait RequestAssertionDSL extends AssertionExecutor:
     val er = EventualRequest(() =>
       req match
         case f: Future[_] => f.asInstanceOf[Future[Response]]
-        case gb: GetBuilder       => gb.perform()
-        case pb: PostBuilder      =>
+        case gb: GetBuilder  => gb.perform()
+        case pb: PostBuilder =>
+          // POST must be fully built (headers/body) before asserting.
           throw IllegalArgumentException("POST must be completed with body/headers before asserting")
         case other =>
           try other.asInstanceOf[Future[Response]]
@@ -55,23 +64,32 @@ trait RequestAssertionDSL extends AssertionExecutor:
     lastEventualRequest = Some(er)
     er
 
-  // Description builder
+  /** After writing:
+    * "a get on user 1" should "respond with 200" += eventually(...)
+    * we get a DescriptionBuilder, which awaits the request.
+    */
   case class DescriptionBuilder(subject: String, expected: String):
     infix def += (ev: Any): PendingAssertion =
+      // Create the semantic description from the two strings
       val desc = AssertionDescription(subject, expected)
+
+      // RHS is:
+      // - an EventualRequest
+      // - something else, in which case we use lastEventualRequest
       val eventual = ev match
         case er: EventualRequest => er
         case _: Unit => lastEventualRequest.getOrElse(throw IllegalArgumentException("No eventual request found"))
         case other => throw IllegalArgumentException(s"Unsupported RHS for +=: $other")
+      
+      // We don't yet know if it's `respond` or `fail`, so we return a PendingAssertion
       PendingAssertion(desc, eventual)
 
-  /* 
-   Entry point ("a get on user 1 with api key")
-
-   "a get on user 1 with api key" should "respond with 200 ok"
-   is parsed as
-   "a get on user 1 with api key".should("respond with 200 ok")
-   */ 
+  /**
+    * Entry point ("a get on user 1 with api key")
+    * "a get on user 1 with api key" should "respond with 200 ok"
+    * is parsed as
+    * "a get on user 1 with api key".should("respond with 200 ok")
+    */
   extension (subject: String)
     infix def should (expected: String): DescriptionBuilder =
       val d = AssertionDescription(subject, expected)
@@ -87,7 +105,7 @@ trait RequestAssertionDSL extends AssertionExecutor:
     def should (token: fail.type): Unit =
       namedAssertions = namedAssertions :+ AssertionWithDescription(desc, RequestWillFailAssertion(ev.eval))
 
-  // Response predicate helpers
+  /** Response predicates  */
   object statusCode:
     def apply (n: Int): ResponsePredicate = ResponseHasStatusCodeEqualsToPredicate(n)
 
@@ -102,7 +120,12 @@ trait RequestAssertionDSL extends AssertionExecutor:
     infix def | (b: ResponsePredicate): ResponsePredicate = OrPredicate(a, b)
     infix def & (b: ResponsePredicate): ResponsePredicate = AndPredicate(a, b)
 
-  // markers
+
+  /**
+    * Markers:
+    * - ... should respond ...
+    * - ... should fail
+    */
   object respond
   object fail
 
