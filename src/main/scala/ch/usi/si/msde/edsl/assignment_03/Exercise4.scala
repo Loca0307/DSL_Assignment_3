@@ -186,11 +186,11 @@ class Exercise4_Example extends RequestAssertionTwoDSL:
   import HttpRequestDSL.{given, *}
   import model.AsyncContext.{given, *}
 
-  "a get on a non-existing user" should "respond with 404" += eventually (
+  "a get on a non-existing user" should "respond with 401" += eventually (
     (https `://` "reqres.in" / "api" / "user" / "-3721").GET `with` headers == (
       "x-api-key" -> "reqres-free-v1"
     )
-  ) should respond `with` (statusCode(404) or statusCode(401) and contentType("application/json"))
+  ) should respond `with` (statusCode(999) or statusCode(401) and contentType("application/json"))
 
   "a login without password" should "respond with a json body containing an error" += eventually (
     (https `://` "reqres.in" / "api" / "login").POST `with` headers == (
