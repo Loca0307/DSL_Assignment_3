@@ -111,27 +111,6 @@ trait RequestAssertionTwoDSL extends AssertionExecutor:
     ev: EventualRequest,
     var current: ResponsePredicate
   )
-
-  /**
-    * It holds:
-    *  - the EventualRequest which knows how to execute the HTTP call
-    *  - the PredicateChainBuilder whose `current` field will be
-    *    mutated by next `.or` or `.and` calls
-    *
-    * At run-time, we read `chain.current` to get the FINAL predicate, after
-    * all boolean chaining is done
-    */
-  case class PredicateAssertion(
-    ev: EventualRequest,
-    chain: PredicateChainBuilder
-  ) extends ExecutableAssertion:
-    def run(description: AssertionDescription): Future[AssertionResult] =
-      // Get the final predicate at execution time
-      val finalPredicate = chain.current
-      
-      // Delegate to the existing assertion implementation from the model
-      RequestSucceedsWithResponsePredicateAssertion(ev.eval, finalPredicate)
-        .run(description)
         
   /**
     * These are used when predicates are combined directly, e.g.:
@@ -187,15 +166,9 @@ trait RequestAssertionTwoDSL extends AssertionExecutor:
     /**
       * Starts a predicate chain after `respond`
       */
-    infix def `with`(p: ResponsePredicate): PredicateChainBuilder =
-      // start a new chain
-      val chain = PredicateChainBuilder(desc, ev, p)
-      // register a single assertion that will use chain.current at runtime
-      val assertion = PredicateAssertion(ev, chain)
-      namedAssertions =
-        namedAssertions :+ AssertionWithDescription(desc, assertion)
-      // return builder so we can chain .or or .and
-      chain
+    infix def `with`(p: ResponsePredicate): Unit =
+      val assertion = RequestSucceedsWithResponsePredicateAssertion(ev.eval, p)
+      namedAssertions = namedAssertions :+ AssertionWithDescription(desc, assertion)
 
   /**
     * Boolean operations on PredicateChainBuilder.
@@ -228,7 +201,7 @@ class Exercise4_Example extends RequestAssertionTwoDSL:
     (https `://` "reqres.in" / "api" / "user" / "-3721").GET `with` headers == (
       "x-api-key" -> "reqres-free-v1"
     )
-  ) should respond `with` (statusCode(404) or statusCode(401)) and contentType("application/json")
+  ) should respond `with` (statusCode(404) or statusCode(401) and contentType("application/json"))
 
   "a login without password" should "respond with a json body containing an error" += eventually (
     (https `://` "reqres.in" / "api" / "login").POST `with` headers == (
@@ -236,11 +209,11 @@ class Exercise4_Example extends RequestAssertionTwoDSL:
     ) and body == jobj(
       "email" `:` "morpheus@nebuchadnezzar"
     )
-  ) should respond `with` responseBody(jobj(
+  ) should respond `with` (responseBody(jobj(
     "error" `:` "Missing password",
     "message" `:` "Create your API key at https://app.reqres.in to access the ReqRes API.",
     "signup_url" `:` "https://app.reqres.in"
-  )) and statusCode(401)
+  )) and statusCode(401))
 
   "a get on user 1 with api key" should "respond with 200 ok" += eventually (
     (https `://` "reqres.in" / "api" / "user" / "1").GET `with` headers == (
@@ -250,7 +223,7 @@ class Exercise4_Example extends RequestAssertionTwoDSL:
 
   "a get on user 1 without api key" should "respond with 200 or 401" += eventually (
     (https `://` "reqres.in" / "api" / "user" / "1").GET
-  ) should respond `with` statusCode(200) or statusCode(401)
+  ) should respond `with` (statusCode(200) or statusCode(401))
 
   "a get on user 3 with api key" should "respond with some json" += eventually (
     (https `://` "reqres.in" / "api" / "user" / "3").GET `with` headers == (
@@ -262,7 +235,7 @@ class Exercise4_Example extends RequestAssertionTwoDSL:
     (https `://` "reqres.in" / "api" / "user" / "-3721").GET `with` headers == (
       "x-api-key" -> "reqres-free-v1"
     )
-  ) should respond `with` statusCode(401) and contentType("application/json") or statusCode(999)
+  ) should respond `with` (statusCode(401) and contentType("application/json") or statusCode(999))
 
   "a GET on a non-existing domain" should "fail" += eventually (
     (https `://` "www.usi.chh").GET
@@ -282,9 +255,9 @@ class Exercise4_Example extends RequestAssertionTwoDSL:
     ) and body == jobj(
       "email" `:` "morpheus@nebuchadnezzar"
     )
-  ) should respond `with` responseBody(jobj(
+  ) should respond `with` (responseBody(jobj(
     "error" `:` "Missing password"
-  )) and (statusCode(400) or statusCode(999))
+  )) and (statusCode(400) or statusCode(999)))
 
   run()
 end Exercise4_Example
