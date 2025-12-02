@@ -47,14 +47,16 @@ trait RequestAssertionTwoDSL extends AssertionExecutor:
     er
 
   case class DescriptionBuilder(subject: String, expected: String):
-    infix def += (ev: Any): PendingAssertion =
+    infix def += (ev: Unit): PendingAssertion =
+      // Create the semantic description from the two strings
       val desc = AssertionDescription(subject, expected)
-      val eventual = ev match
-        case er: EventualRequest => er
-        case _ =>
-          lastEventualRequest.getOrElse(
-            throw IllegalArgumentException("No eventual request found")
-          )
+
+      val eventual = 
+        lastEventualRequest.getOrElse(
+          throw IllegalArgumentException("No eventual request found")
+        )
+      
+      // We don't yet know if it's `respond` or `fail`, so we return a PendingAssertion
       PendingAssertion(desc, eventual)
 
   extension (subject: String)
@@ -65,7 +67,9 @@ trait RequestAssertionTwoDSL extends AssertionExecutor:
       DescriptionBuilder(subject, expected)
 
   class PendingAssertion(val desc: AssertionDescription, val ev: EventualRequest):
-    def should (token: respond.type): RespondBuilder = RespondBuilder(desc, ev)
+    def should (token: respond.type): RespondBuilder = 
+      RespondBuilder(desc, ev)
+      
     def should (token: fail.type): Unit =
       namedAssertions = namedAssertions :+ AssertionWithDescription(desc, RequestWillFailAssertion(ev.eval))
 
@@ -81,8 +85,13 @@ trait RequestAssertionTwoDSL extends AssertionExecutor:
   object respond
   object fail
 
+  case class RespondBuilder(desc: AssertionDescription, ev: EventualRequest):
+    infix def `with`(p: ResponsePredicate): Unit =
+      val assertion = RequestSucceedsWithResponsePredicateAssertion(ev.eval, p)
+      namedAssertions = namedAssertions :+ AssertionWithDescription(desc, assertion)
+
   /* 
-    BOOLEAN LOGIC.
+    NEW BOOLEAN LOGIC.
     
     This wouldn't work:
       extension (a: ResponsePredicate)
@@ -93,38 +102,56 @@ trait RequestAssertionTwoDSL extends AssertionExecutor:
       statusCode(404) or statusCode(200) and contentType("application/json")
     would be parsed as:
       (statusCode(404).or(statusCode(200))).and(contentType("application/json"))
-    but normal boolean logic would interpret it as:
-      (statusCode(404).or(statusCode(200)).and(contentType("application/json"))
-    because `and` has higher precedence than `or`
-   */
+    because Scala's method calls are left-associative.
 
-  /**
-    * Holds:
-    *  - the description and eventual request (`desc`, `ev`)
-    *  - the current accumulated predicate (`current`)
-    * 
-    * This is what `respond with ...` returns, so we can keep chaining
-    * `.or(...)` / `.and(...)` after `with`.
-    */
-  case class PredicateChainBuilder(
-    desc: AssertionDescription,
-    ev: EventualRequest,
-    var current: ResponsePredicate
-  )
+    Normal boolean logic would interpret it as:
+      (statusCode(404).or(statusCode(200)).and(contentType("application/json"))
+    because `and` has higher precedence than `or`.
+
+    We want something like:
+      OrPredicate(
+        ResponseHasStatusCodeEqualsToPredicate(404),
+        AndPredicate(
+          ResponseHasStatusCodeEqualsToPredicate(401),
+          ResponseHasContentTypeEqualsToPredicate("json")
+        )
+      )
+    and not
+      AndPredicate(
+        OrPredicate(
+          ResponseHasStatusCodeEqualsToPredicate(404),
+          ResponseHasStatusCodeEqualsToPredicate(401),
+        ),
+        ResponseHasContentTypeEqualsToPredicate("json")
+    )
+
+    Idea:
+    Everything inside the parentheses of
+      respond `with` (boolean expression)
+    is evaluated BEFORE `with` is called.
+    So the ResponsePredicate is rewritten in method calls.
+    Then, the extension methods invoke BooleanLogic which
+    fixes the operator precedence and build a single ResponsePredicate tree.
+    The resulting ResponsePredicate is what gets passed as the argument `p`
+    to the `with`(p) method.
+   */
         
   /**
-    * These are used when predicates are combined directly, e.g.:
-    * statusCode(404) or statusCode(401) and contentType("application/json")
+    * These are used after `with` to combine predicates:
+    *   statusCode(404) or statusCode(401) and contentType("application/json")
+    * We delegate the logic to BooleanLogic to create the ResponsePredicate using a tree
     */
   extension (a: ResponsePredicate)
     infix def and(b: ResponsePredicate): ResponsePredicate = BooleanLogic.and(a, b)
     infix def or(b: ResponsePredicate): ResponsePredicate = BooleanLogic.or(a, b)
 
   /**
-    * Centralized boolean logic for ResponsePredicate
+    * Helper for boolean logic.
+    * It builds predicate trees with correct precedence.
     */
   object BooleanLogic:
     /** 
+      * Simple case.
       * Wrap the whole existing expression on the left.
       */
     def or(a: ResponsePredicate, b: ResponsePredicate): ResponsePredicate =
@@ -142,52 +169,14 @@ trait RequestAssertionTwoDSL extends AssertionExecutor:
     def and(a: ResponsePredicate, b: ResponsePredicate): ResponsePredicate =
       a match
         case OrPredicate(left, right) =>
-          // push the new AND into the right-hand side recursively
+          // Recursive call ensures that if the right branch is also an OR,
+          // the AND continues propagating correctly into the deepest right side.
           OrPredicate(left, and(right, b))
         case _ =>
-          // no top-level OR: simple AND on this level
+          // no top-level OR: simple AND composition at this level
           AndPredicate(a, b)
 
   end BooleanLogic
-
-  /**
-    * RespondBuilder represents:
-    * ... should respond
-    *
-    * From here, the user will write:
-    * ... should respond `with` statusCode(200) or statusCode(401) and ...
-    *
-    * The `with` method:
-    *  - starts the chain with the first predicate
-    *  - registers a PredicateAssertion
-    *  - returns a PredicateChainBuilder so `.or` or `.and` can mutate the predicate
-    */
-  case class RespondBuilder(desc: AssertionDescription, ev: EventualRequest):
-    /**
-      * Starts a predicate chain after `respond`
-      */
-    infix def `with`(p: ResponsePredicate): Unit =
-      val assertion = RequestSucceedsWithResponsePredicateAssertion(ev.eval, p)
-      namedAssertions = namedAssertions :+ AssertionWithDescription(desc, assertion)
-
-  /**
-    * Boolean operations on PredicateChainBuilder.
-    * These methods:
-    *  - update the builder's `current` predicate using BooleanLogic
-    *  - return the same builder so the chain can continue
-    * 
-    * Example:
-    * ... should respond `with` statusCode(200) or statusCode(401) and contentType("json")
-    * works without parentheses
-    */
-  extension (chain: PredicateChainBuilder)
-    infix def and(b: ResponsePredicate): PredicateChainBuilder =
-      chain.current = BooleanLogic.and(chain.current, b)
-      chain
-
-    infix def or(b: ResponsePredicate): PredicateChainBuilder =
-      chain.current = BooleanLogic.or(chain.current, b)
-      chain
 
 end RequestAssertionTwoDSL
 
