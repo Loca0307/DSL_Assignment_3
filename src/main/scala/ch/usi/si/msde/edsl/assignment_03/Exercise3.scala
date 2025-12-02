@@ -124,8 +124,10 @@ trait RequestAssertionDSL extends AssertionExecutor:
   object fail
 
   // member methods on PendingAssertion handle should/fail
-
   case class RespondBuilder(desc: AssertionDescription, ev: EventualRequest):
+    /**
+      * Starts a predicate chain after `respond`
+      */
     infix def `with` (p: ResponsePredicate): Unit =
       val assertion = RequestSucceedsWithResponsePredicateAssertion(ev.eval, p)
       namedAssertions = namedAssertions :+ AssertionWithDescription(desc, assertion)
