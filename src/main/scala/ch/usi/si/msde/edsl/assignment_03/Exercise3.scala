@@ -47,19 +47,15 @@ trait RequestAssertionDSL extends AssertionExecutor:
       val desc = lastDescription.getOrElse(throw IllegalArgumentException("No description found"))
       namedAssertions = namedAssertions :+ AssertionWithDescription(desc, RequestWillFailAssertion(this.eval))
 
-  // TODO: remove .asInstanceOf
-  def eventually (req: => Any): EventualRequest =
+  def eventually (req: => Any): EventualRequest =   // with the => Any, we're saying that req is evaluated calling eval()
     val er = EventualRequest(() =>
       req match
-        case f: Future[_] => f.asInstanceOf[Future[Response]]
         case gb: GetBuilder  => gb.perform()
         case pb: PostBuilder =>
           // POST must be fully built (headers/body) before asserting.
           throw IllegalArgumentException("POST must be completed with body/headers before asserting")
-        case other =>
-          try other.asInstanceOf[Future[Response]]
-          catch
-            case _: Throwable => throw IllegalArgumentException(s"Unsupported request expression: $other")
+        case f: Future[_] =>
+          f.asInstanceOf[Future[Response]]
     )
     lastEventualRequest = Some(er)
     er
@@ -69,17 +65,14 @@ trait RequestAssertionDSL extends AssertionExecutor:
     * we get a DescriptionBuilder, which awaits the request.
     */
   case class DescriptionBuilder(subject: String, expected: String):
-    infix def += (ev: Any): PendingAssertion =
+    infix def += (ev: Unit): PendingAssertion =
       // Create the semantic description from the two strings
       val desc = AssertionDescription(subject, expected)
 
-      // RHS is:
-      // - an EventualRequest
-      // - something else, in which case we use lastEventualRequest
-      val eventual = ev match
-        case er: EventualRequest => er
-        case _: Unit => lastEventualRequest.getOrElse(throw IllegalArgumentException("No eventual request found"))
-        case other => throw IllegalArgumentException(s"Unsupported RHS for +=: $other")
+      val eventual = 
+        lastEventualRequest.getOrElse(
+          throw IllegalArgumentException("No eventual request found")
+        )
       
       // We don't yet know if it's `respond` or `fail`, so we return a PendingAssertion
       PendingAssertion(desc, eventual)
@@ -101,7 +94,9 @@ trait RequestAssertionDSL extends AssertionExecutor:
   // Pending assertion after +=: this class exposes member `should` so chains
   // of `should` respond correctly.
   class PendingAssertion(val desc: AssertionDescription, val ev: EventualRequest):
-    def should (token: respond.type): RespondBuilder = RespondBuilder(desc, ev)
+    def should (token: respond.type): RespondBuilder = 
+      RespondBuilder(desc, ev)
+      
     def should (token: fail.type): Unit =
       namedAssertions = namedAssertions :+ AssertionWithDescription(desc, RequestWillFailAssertion(ev.eval))
 
@@ -119,7 +114,6 @@ trait RequestAssertionDSL extends AssertionExecutor:
   extension (a: ResponsePredicate)
     infix def | (b: ResponsePredicate): ResponsePredicate = OrPredicate(a, b)
     infix def & (b: ResponsePredicate): ResponsePredicate = AndPredicate(a, b)
-
 
   /**
     * Markers:

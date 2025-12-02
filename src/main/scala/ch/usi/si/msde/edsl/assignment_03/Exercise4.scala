@@ -33,17 +33,15 @@ trait RequestAssertionTwoDSL extends AssertionExecutor:
       val desc = lastDescription.getOrElse(throw IllegalArgumentException("No description found"))
       namedAssertions = namedAssertions :+ AssertionWithDescription(desc, RequestWillFailAssertion(this.eval))
 
-  def eventually (req: => Any): EventualRequest =
+  def eventually (req: => Any): EventualRequest =   // with the => Any, we're saying that req is evaluated calling eval()
     val er = EventualRequest(() =>
       req match
-        case f: Future[_] => f.asInstanceOf[Future[Response]]
-        case gb: GetBuilder       => gb.perform()
-        case pb: PostBuilder      =>
+        case gb: GetBuilder  => gb.perform()
+        case pb: PostBuilder =>
+          // POST must be fully built (headers/body) before asserting.
           throw IllegalArgumentException("POST must be completed with body/headers before asserting")
-        case other =>
-          try other.asInstanceOf[Future[Response]]
-          catch
-            case _: Throwable => throw IllegalArgumentException(s"Unsupported request expression: $other")
+        case f: Future[_] =>
+          f.asInstanceOf[Future[Response]]
     )
     lastEventualRequest = Some(er)
     er
@@ -99,7 +97,6 @@ trait RequestAssertionTwoDSL extends AssertionExecutor:
       (statusCode(404).or(statusCode(200)).and(contentType("application/json"))
     because `and` has higher precedence than `or`
    */
-  // Builder that keeps track of the current predicate for this respond-chain
 
   /**
     * Holds:
@@ -173,9 +170,6 @@ trait RequestAssertionTwoDSL extends AssertionExecutor:
           AndPredicate(a, b)
 
   end BooleanLogic
-
-  // Remember the current "respond" context for boolean chaining
-  private var pendingRespondContext: Option[(AssertionDescription, EventualRequest)] = None
 
   /**
     * RespondBuilder represents:
