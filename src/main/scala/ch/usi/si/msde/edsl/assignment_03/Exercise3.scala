@@ -50,7 +50,8 @@ trait RequestAssertionDSL extends AssertionExecutor:
   def eventually (req: => Any): EventualRequest =   // with the => Any, we're saying that req is evaluated calling eval()
     val er = EventualRequest(() =>
       req match
-        case gb: GetBuilder  => gb.perform()
+        case gb: GetBuilder => 
+          gb.perform()
         case pb: PostBuilder =>
           // POST must be fully built (headers/body) before asserting.
           throw IllegalArgumentException("POST must be completed with body/headers before asserting")
