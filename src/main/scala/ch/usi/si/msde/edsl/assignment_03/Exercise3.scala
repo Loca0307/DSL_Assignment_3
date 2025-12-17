@@ -66,7 +66,30 @@ trait RequestAssertionDSL extends AssertionExecutor:
     * we get a DescriptionBuilder, which awaits the request.
     */
   case class DescriptionBuilder(subject: String, expected: String):
-    infix def += (ev: Unit): PendingAssertion =
+
+    /**
+      
+      * 
+      * The reason why inside of += we are using lastEventualRequest even if it's initialized
+      * just inside method eventually it's because of the Scala's parsing.
+      * In fact += is just syntax sugar. Writing:
+      *   x += y
+      * Scala rewrites it as:
+      *    x = x + y
+      * When Scala sees:
+      * db += eventually(...)
+      * it evaluates:
+	    * 1. the left side db (the DescriptionBuilder)
+	    * 2. the argument eventually(...)
+	    * 3. then calls the method += with the argument value
+      * 
+      * So, in
+      *   x = x + y
+      * first we evaluate the left part (x),
+      * then the right part (x + y)
+      * and finally we execute the assignment operation (=), which has the lowest precedence
+      */
+    infix def += (ev: Unit): PendingAssertion = // Unit because 
       // Create the semantic description from the two strings
       val desc = AssertionDescription(subject, expected)
 

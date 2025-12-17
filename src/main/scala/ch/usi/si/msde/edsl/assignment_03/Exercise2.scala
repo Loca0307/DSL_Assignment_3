@@ -29,34 +29,19 @@ object HttpRequestDSL:
   ):
     def build: URL = URL(scheme, domainAndPath)
 
-  // Conversion from UrlBuilder to URL
-  // Any time a URL is expected and I have a UrlBuilder, call .build automatically
-  given Conversion[UrlBuilder, URL] =
-    (b: UrlBuilder) => b.build  // Override apply with a lambda
-
   /**
     * Scheme `://` 
     */ 
   extension (s: URLScheme)
-    // Parse https `://` "www.usi.ch" / "en" / "university" as 
-    // https.`://`("www.usi.ch", "en", "university")
-    // and return UrlBuilder(HTTPS, DomainAndPath(List("www.usi.ch", "en", "university"))).
+    // Parse http `://` "usi.cch" as http.`://`("usi.cch") and return UrlBuilder(HTTPS, DomainAndPath(List("www.usi.ch"))).
     infix def `://` (domain: String): UrlBuilder = 
       UrlBuilder(s, DomainAndPath(List(domain)))
       
-    // Parse http `://` "usi.cch" as http.`://`("usi.cch") and return UrlBuilder(HTTPS, DomainAndPath(List("www.usi.ch"))).
+    // Parse https `://` "www.usi.ch" / "en" / "university" as 
+    // https.`://`("www.usi.ch", "en", "university")
+    // and return UrlBuilder(HTTPS, DomainAndPath(List("www.usi.ch", "en", "university"))).
     infix def `://` (dap: DomainAndPath): UrlBuilder = 
       UrlBuilder(s, dap)
-
-  /**
-    * Append path elements with `/`
-    * Progressively build DomainAndPath via its .append method
-    * At every `/` we return a new UrlBuilder with a new element in domainAndPath
-    */ 
-  extension (b: UrlBuilder)
-    infix def / (segment: String): UrlBuilder = 
-      UrlBuilder(b.scheme, b.domainAndPath.append(segment))
-
 
   /**
     * This works with entry points (https `://` "www.usi.ch")
